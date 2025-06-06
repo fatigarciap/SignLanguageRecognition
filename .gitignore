@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+*.egg-info/
+
+# Datos y modelos
+data/*
+models/*
+results/*
+
+# Notebooks
+notebooks/*.ipynb_checkpoints
+
+# Otros
+.DS_Store
+*.log

@@ -1,0 +1,187 @@
+import os
+import torch
+import torch.nn as nn
+from torchvision import models, transforms
+from torchvision.datasets import ImageFolder
+import numpy as np
+from sklearn.metrics import accuracy_score, f1_score
+
+# Definir modelos base (puedes extender esta clase según la técnica)
+class PrototypicalNetwork(nn.Module):
+    def __init__(self, backbone):
+        super(PrototypicalNetwork, self).__init__()
+        self.backbone = backbone
+        self.fc = nn.Linear(512, 64)
+
+    def forward(self, x):
+        x = self.backbone(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+        return x
+
+class TransformerContrastiveModel(nn.Module):
+    def __init__(self):
+        super(TransformerContrastiveModel, self).__init__()
+        self.backbone = models.vit_b_16(weights=models.ViT_B_16_Weights.IMAGENET1K_V1)
+        self.backbone.heads = nn.Identity()
+        self.fc = nn.Linear(768, 64)
+
+    def forward(self, x):
+        x = self.backbone(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+        return x
+
+class MAMLModel(nn.Module):
+    def __init__(self):
+        super(MAMLModel, self).__init__()
+        self.backbone = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+        self.backbone.fc = nn.Linear(512, 64)
+
+    def forward(self, x):
+        return self.backbone(x)
+
+class RelationNetwork(nn.Module):
+    def __init__(self):
+        super(RelationNetwork, self).__init__()
+        self.backbone = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+        self.backbone.fc = nn.Identity()
+        self.relation_module = nn.Sequential(
+            nn.Linear(1024, 256),
+            nn.ReLU(),
+            nn.Linear(256, 1)
+        )
+
+    def forward(self, support, query):
+        support_features = self.backbone(support)
+        query_features = self.backbone(query)
+        batch_size, n_support, c = support_features.size()
+        n_query = query_features.size(0)
+        support_features = support_features.view(batch_size * n_support, c)
+        query_features = query_features.unsqueeze(1).repeat(1, n_support, 1).view(batch_size * n_query * n_support, c)
+        relations = self.relation_module(torch.cat([support_features, query_features], dim=1))
+        return relations.view(batch_size, n_query, n_support)
+
+# Función para crear un episodio
+def create_episode(dataset, n_way=5, n_shot=5, n_query=5, device="cpu"):
+    class_names = dataset.classes
+    all_indices = list(range(len(dataset)))
+    selected_classes = np.random.choice(len(class_names), n_way, replace=False)
+    
+    support_set = []
+    query_set = []
+    support_labels = []
+    query_labels = []
+
+    for i, class_idx in enumerate(selected_classes):
+        class_indices = [idx for idx in all_indices if dataset.targets[idx] == class_idx]
+        np.random.shuffle(class_indices)
+        support_indices = class_indices[:n_shot]
+        query_indices = class_indices[n_shot:n_shot + n_query]
+
+        for idx in support_indices:
+            img, _ = dataset[idx]
+            support_set.append(img)
+        for idx in query_indices:
+            img, _ = dataset[idx]
+            query_set.append(img)
+        support_labels.extend([i] * n_shot)
+        query_labels.extend([i] * n_query)
+
+    support = torch.stack(support_set).to(device)
+    query = torch.stack(query_set).to(device)
+    support_labels = torch.tensor(support_labels, dtype=torch.long).to(device)
+    query_labels = torch.tensor(query_labels, dtype=torch.long).to(device)
+    return support, query, support_labels, query_labels
+
+# Función para evaluar el modelo (genérica para todas las técnicas)
+def evaluate_few_shot(model, dataset, model_type, n_way=5, n_shot=5, n_query=5, n_episodes=50, device="cpu"):
+    model.eval()
+    all_predictions = []
+    all_labels = []
+
+    with torch.no_grad():
+        for _ in range(n_episodes):
+            support, query, support_labels, query_labels = create_episode(dataset, n_way, n_shot, n_query, device)
+
+            if model_type == "relation_network":
+                relations = model(support, query)
+                scores = relations.mean(dim=1)  # Simplificación
+            else:
+                # Para Prototypical, Transformer, y MAML (simplificado)
+                support_features = model(support)
+                query_features = model(query)
+                if model_type == "transformer_contrastive":
+                    distances = 1 - torch.nn.functional.cosine_similarity(query_features.unsqueeze(1), support_features.unsqueeze(0))
+                else:
+                    distances = torch.cdist(query_features, support_features)
+                scores = -distances  # Menor distancia = mayor similitud
+                _, predictions = torch.max(scores, dim=1)
+
+            if model_type == "maml":
+                # Simulación de adaptación (simplificada, requiere entrenamiento específico)
+                query_features = model(query)
+                _, predictions = torch.max(query_features, dim=1)
+            else:
+                _, predictions = torch.max(scores, dim=1)
+
+            all_predictions.extend(predictions.cpu().numpy())
+            all_labels.extend(query_labels.cpu().numpy())
+
+    accuracy = accuracy_score(all_labels, all_predictions)
+    f1 = f1_score(all_labels, all_predictions, average="weighted")
+    return accuracy, f1
+
+# Configuración principal
+def main():
+    # Detectar dispositivo
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Usando dispositivo: {device}")
+
+    # Transformaciones para las imágenes
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
+    # Cargar datos
+    val_dataset = ImageFolder(os.path.join("data", "validation"), transform=transform)
+
+    # Definir modelos y rutas (ajústalas según donde guardaste los modelos)
+    models_config = {
+        "prototypical": {"model_class": PrototypicalNetwork, "path": "models/few_shot/prototypical_model.pth", "backbone": models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)},
+        "transformer_contrastive": {"model_class": TransformerContrastiveModel, "path": "models/few_shot/transformer_contrastive.pth", "backbone": None},
+        "maml": {"model_class": MAMLModel, "path": "models/few_shot/maml_model.pth", "backbone": None},
+        "relation_network": {"model_class": RelationNetwork, "path": "models/few_shot/relation_network.pth", "backbone": None}
+    }
+
+    # Evaluar cada modelo
+    for model_type, config in models_config.items():
+        print(f"\nEvaluando modelo: {model_type}")
+        backbone = config["backbone"] if config["backbone"] else None
+        model = config["model_class"](backbone).to(device) if backbone else config["model_class"]().to(device)
+        model.load_state_dict(torch.load(config["path"]))
+
+        # Ajustar n_way, n_shot, n_query según lo discutido (puedes cambiar estos valores)
+        n_way = 3  # Menos clases para simplificar
+        n_shot = 10  # Más muestras de soporte para mejorar accuracy
+        n_query = 5  # Suficiente para evaluación estable
+        n_episodes = 50  # Menos episodios para reducir tiempo
+
+        accuracy, f1 = evaluate_few_shot(model, val_dataset, model_type, n_way, n_shot, n_query, n_episodes, device)
+        print(f"Accuracy: {accuracy:.4f}")
+        print(f"F1-Score: {f1:.4f}")
+
+        # Guardar resultados
+        results_path = os.path.join("results", "few_shot", model_type)
+        os.makedirs(results_path, exist_ok=True)
+        with open(os.path.join(results_path, "evaluation_metrics.txt"), "w") as f:
+            f.write(f"Model: {model_type}\n")
+            f.write(f"n_way: {n_way}, n_shot: {n_shot}, n_query: {n_query}, n_episodes: {n_episodes}\n")
+            f.write(f"Accuracy: {accuracy:.4f}\n")
+            f.write(f"F1-Score: {f1:.4f}\n")
+        print(f"Resultados guardados en {results_path}/evaluation_metrics.txt")
+
+if __name__ == "__main__":
+    main()

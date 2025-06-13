@@ -12,9 +12,9 @@ import matplotlib.pyplot as plt
 # Configuración
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 MODELS_PATH = os.path.join(BASE_DIR, "models", "pretrained")
-RESULTS_PATH = os.path.join(BASE_DIR, "results", "pretrained", "mobilenet")  # Cambiado a subcarpeta mobilenet
-MODEL_FILE = "mobilenet_sign_language.h5"  # Ajusta según el modelo a evaluar
-MODEL_TYPE = "mobilenet"  # Define el tipo de modelo a evaluar
+RESULTS_PATH = os.path.join(BASE_DIR, "results", "pretrained", "resnet50")  # Cambiado a subcarpeta mobilenet
+MODEL_FILE = "resnet50_sign_language_best.h5"  # Ajusta según el modelo a evaluar
+MODEL_TYPE = "resnet50"  # Define el tipo de modelo a evaluar
 
 # Asegurarse de que las carpetas existan
 os.makedirs(RESULTS_PATH, exist_ok=True)

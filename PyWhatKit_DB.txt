@@ -1,0 +1,15 @@
+Date: 16/6/2025
+Time: 4:22
+Phone Number: +34600112233
+Message: Gesto detectado: 0.0613
+--------------------
+Date: 16/6/2025
+Time: 4:23
+Phone Number: +34600112233
+Message: Gesto detectado: 0.0663
+--------------------
+Date: 16/6/2025
+Time: 4:24
+Phone Number: +34600112233
+Message: Gesto detectado: 0.1006
+--------------------

@@ -13,6 +13,12 @@ class MatchingNetwork(nn.Module):
     def __init__(self):
         super(MatchingNetwork, self).__init__()
         self.backbone = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+        # Congelar todas las capas inicialmente
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+        # Descongelar layer4 y fc
+        for param in self.backbone.layer4.parameters():
+            param.requires_grad = True
         self.backbone.fc = nn.Identity()  # Eliminar la capa fully connected
         self.fc = nn.Linear(512, 64)  # Reducir dimensionalidad
         self.attention = nn.Linear(64, 1)  # Capa de atención simple
@@ -81,7 +87,7 @@ def compute_similarities(model, support, query):
 def train_matching_network(model, train_dataset, n_way=3, n_shot=5, n_query=2, n_episodes=100, device="cpu"):
     model.train()
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.0005)
+    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=0.0001)  # Solo parámetros descongelados
     total_accuracy = 0.0
 
     for episode in range(n_episodes):
@@ -104,8 +110,10 @@ def train_matching_network(model, train_dataset, n_way=3, n_shot=5, n_query=2, n
         loss.backward()
         optimizer.step()
 
+        # Verificar gradientes
+        has_grad = any(p.grad is not None for p in model.parameters() if p.requires_grad)
         if (episode + 1) % 10 == 0:
-            print(f"Episodio {episode + 1}/{n_episodes} - Precisión: {accuracy:.4f} - Similitudes min/max: {scores.min():.4f}/{scores.max():.4f}")
+            print(f"Episodio {episode + 1}/{n_episodes} - Precisión: {accuracy:.4f} - Similitudes min/max: {scores.min():.4f}/{scores.max():.4f} - Gradientes: {has_grad}")
 
     avg_accuracy = total_accuracy / n_episodes if n_episodes > 0 else 0.0
     return avg_accuracy
@@ -169,7 +177,7 @@ def main():
 
     # Guardar el modelo
     os.makedirs("models/few_shot", exist_ok=True)
-    model_path = "models/few_shot/matching_network_model.pth"
+    model_path = "models/few_shot/matching_network_model_unfrozen.pth"
     torch.save(model.state_dict(), model_path)
     print(f"Modelo guardado como {model_path}")
 
